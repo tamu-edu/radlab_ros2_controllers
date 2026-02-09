@@ -113,6 +113,10 @@ JointTrajectoryController::command_interface_configuration() const
       conf.names.push_back(joint_name + "/" + interface_type);
     }
   }
+  if (!params_.reset_interface.empty())
+  {
+    conf.names.push_back(params_.reset_interface);
+  }
   return conf;
 }
 
@@ -169,6 +173,32 @@ controller_interface::return_type JointTrajectoryController::update(
   state_current_.time_from_start.sec = 0;
   state_current_.time_from_start.nanosec = 0;
   read_state_from_state_interfaces(state_current_);
+
+  // Check if we need to reset
+  const auto need_to_reset = reset_buffer_.readFromRT();
+  if (need_to_reset && *need_to_reset)
+  {
+    // Look for any exported reset reference interfaces (e.g. '<controller>/reset')
+    // and set them to 1.0 so chained controllers can detect a reset request
+    if (reset_interface_.has_value())
+    {
+      try
+      {
+        reset_interface_.value().get().set_value(1.0);
+      }
+      catch (const std::exception & e)
+      {
+        RCLCPP_ERROR(get_node()->get_logger(), "Failed to write reset interface: %s", e.what());
+      }
+    }
+    else
+    {
+      RCLCPP_WARN(get_node()->get_logger(), "No reset chainable interface available to write to.");
+    }
+
+    // So we don't reset again until the service is re-called
+    reset_buffer_.reset();
+  }
 
   // currently carrying out a trajectory
   if (has_active_trajectory())
@@ -939,6 +969,23 @@ controller_interface::CallbackReturn JointTrajectoryController::on_configure(
     "~/controller_state", rclcpp::SystemDefaultsQoS());
   state_publisher_ = std::make_unique<StatePublisher>(publisher_);
 
+  // Service for resetting state
+  reset_state_server_ = get_node()->create_service<std_srvs::srv::Trigger>(
+    "~/reset",
+    [this](
+      const std::shared_ptr<std_srvs::srv::Trigger::Request> /*req*/,
+      std::shared_ptr<std_srvs::srv::Trigger::Response> res)
+    {
+      // set RT variable to true
+      reset_buffer_.writeFromNonRT(true);
+
+      // Send hold position command to reset trajectory
+      add_new_trajectory_msg(set_hold_position());
+
+      res->success = true;
+      return res->success;
+    });
+
   state_msg_.joint_names = params_.joints;
   state_msg_.reference.positions.resize(dof_);
   state_msg_.reference.velocities.resize(dof_);
@@ -1057,6 +1104,33 @@ controller_interface::CallbackReturn JointTrajectoryController::on_activate(
     }
   }
 
+  // find optional single-value 'reset' chainable interface among claimed command interfaces
+  reset_interface_.reset();
+  for (size_t i = 0; i < command_interfaces_.size(); ++i)
+  {
+    try
+    {
+      if (command_interfaces_[i].get_interface_name() == "reset")
+      {
+        reset_interface_ = std::ref(command_interfaces_[i]);
+        // initialize to zero
+        reset_interface_.value().get().set_value(0.0);
+        RCLCPP_INFO(
+          logger, "Found and wired reset chainable interface: %s",
+          command_interfaces_[i].get_name().c_str());
+        break;
+      }
+    }
+    catch (...)
+    {
+      RCLCPP_WARN(
+        logger,
+        "Unable to access command interface at index %zu while searching for 'reset' "
+        "chainable interface.",
+        i);
+    }
+  }
+
   current_trajectory_ = std::make_shared<Trajectory>();
   new_trajectory_msg_.writeFromNonRT(std::shared_ptr<trajectory_msgs::msg::JointTrajectory>());
 
@@ -1131,6 +1205,22 @@ controller_interface::CallbackReturn JointTrajectoryController::on_deactivate(
     action_res->set__error_string("Current goal cancelled during deactivate transition.");
     active_goal->setAborted(action_res);
     rt_active_goal_.writeFromNonRT(RealtimeGoalHandlePtr());
+  }
+
+  // clear admittance reset buffer
+  reset_buffer_.reset();
+
+  // clear wired reset interface reference
+  if (reset_interface_.has_value())
+  {
+    try
+    {
+      reset_interface_.reset();
+      RCLCPP_DEBUG(logger, "Cleared reset chainable interface reference on deactivate.");
+    }
+    catch (...)
+    {
+    }
   }
 
   for (size_t index = 0; index < num_cmd_joints_; ++index)

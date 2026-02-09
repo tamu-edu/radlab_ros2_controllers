@@ -173,9 +173,18 @@ AdmittanceController::on_export_reference_interfaces()
   }
 
   std::vector<hardware_interface::CommandInterface> chainable_command_interfaces;
-  const auto num_chainable_interfaces =
-    admittance_->parameters_.chainable_command_interfaces.size() *
-    admittance_->parameters_.joints.size();
+  size_t num_chainable_interfaces = 0ul;
+  for (const auto & interface : admittance_->parameters_.chainable_command_interfaces)
+  {
+    if (interface == "reset")
+    {
+      num_chainable_interfaces += 1ul;
+    }
+    else
+    {
+      num_chainable_interfaces += admittance_->parameters_.joints.size();
+    }
+  }
 
   // allocate dynamic memory
   chainable_command_interfaces.reserve(num_chainable_interfaces);
@@ -187,6 +196,19 @@ AdmittanceController::on_export_reference_interfaces()
   auto index = 0ul;
   for (const auto & interface : admittance_->parameters_.chainable_command_interfaces)
   {
+    if (interface == "reset")
+    {
+      RCLCPP_INFO(get_node()->get_logger(), "Wiring chainable single-value interface: reset");
+      const auto exported_name = std::string(get_node()->get_name());
+      chainable_command_interfaces.emplace_back(hardware_interface::CommandInterface(
+        exported_name, interface, reference_interfaces_.data() + index));
+      reset_reference_ = std::ref(reference_interfaces_[index]);
+      has_reset_reference_ = true;
+      reset_reference_.get() = 0.0;
+      index++;
+      continue;
+    }
+
     for (const auto & joint : admittance_->parameters_.joints)
     {
       if (hardware_interface::HW_IF_POSITION == interface)
@@ -196,9 +218,8 @@ AdmittanceController::on_export_reference_interfaces()
         velocity_reference_.emplace_back(reference_interfaces_[index]);
       }
       const auto exported_prefix = std::string(get_node()->get_name()) + "/" + joint;
-      chainable_command_interfaces.emplace_back(
-        hardware_interface::CommandInterface(
-          exported_prefix, interface, reference_interfaces_.data() + index));
+      chainable_command_interfaces.emplace_back(hardware_interface::CommandInterface(
+        exported_prefix, interface, reference_interfaces_.data() + index));
 
       index++;
     }
@@ -239,7 +260,9 @@ controller_interface::CallbackReturn AdmittanceController::on_configure(
   // validate exported interfaces
   for (const auto & tmp : admittance_->parameters_.chainable_command_interfaces)
   {
-    if (tmp == hardware_interface::HW_IF_POSITION || tmp == hardware_interface::HW_IF_VELOCITY)
+    if (
+      tmp == hardware_interface::HW_IF_POSITION || tmp == hardware_interface::HW_IF_VELOCITY ||
+      tmp == "reset")
     {
       RCLCPP_INFO(
         get_node()->get_logger(), "%s", ("chainable int types are: " + tmp + "\n").c_str());
@@ -510,6 +533,20 @@ controller_interface::return_type AdmittanceController::update_and_write_command
   }
 
   auto offsetted_ft_values = add_wrenches(ft_values_, wrench_command_msg_.wrench);
+
+  // check an optional chainable reset reference written by an upstream controller
+  if (has_reset_reference_)
+  {
+    const double reset_val = reset_reference_.get();
+    if (abs(reset_val) > 1e-3)
+    {
+      // reset admittance offsets
+      admittance_->reset(num_joints_);
+
+      // clear the flag so it won't trigger repeatedly
+      reset_reference_.get() = 0.0;
+    }
+  }
 
   // apply admittance control to reference to determine desired state
   admittance_->update(joint_state_, offsetted_ft_values, reference_, period, reference_admittance_);

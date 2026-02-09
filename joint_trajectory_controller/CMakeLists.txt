@@ -18,6 +18,7 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
   rclcpp_lifecycle
   realtime_tools
   rsl
+  std_srvs
   tl_expected
   trajectory_msgs
   urdf
@@ -61,7 +62,8 @@ target_link_libraries(joint_trajectory_controller PUBLIC
                       urdf::urdf
                       angles::angles
                       ${trajectory_msgs_TARGETS}
-                      ${control_msgs_TARGETS})
+                      ${control_msgs_TARGETS}
+                      ${std_srvs_TARGETS})
 
 pluginlib_export_plugin_description_file(controller_interface joint_trajectory_plugin.xml)
 

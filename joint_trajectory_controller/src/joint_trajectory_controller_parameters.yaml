@@ -22,6 +22,12 @@ joint_trajectory_controller:
       unique<>: null,
     }
   }
+  reset_interface: {
+    type: string,
+    default_value: "",
+    description: "Chained controller reset interface",
+    read_only: true,
+  }
   command_interfaces: {
     type: string_array,
     default_value: [],

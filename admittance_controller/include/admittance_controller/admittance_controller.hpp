@@ -112,6 +112,10 @@ protected:
   // Admittance rule and dependent variables;
   std::unique_ptr<admittance_controller::AdmittanceRule> admittance_;
 
+  // reset reference written by upstream controllers (e.g. JTC)
+  std::reference_wrapper<double> reset_reference_ = std::ref(*(new double(0.0)));
+  bool has_reset_reference_ = false;
+
   // force torque sensor
   std::unique_ptr<semantic_components::ForceTorqueSensor> force_torque_sensor_;
 
