@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 
+#include <control_toolbox/filters.hpp>
 #include "admittance_controller/admittance_rule_impl.hpp"
 #include "geometry_msgs/msg/wrench.hpp"
 #include "trajectory_msgs/msg/joint_trajectory_point.hpp"
@@ -740,7 +741,10 @@ void AdmittanceController::read_state_reference_interfaces(
         {
           position_reference_[i].get() = last_reference_.positions[i];
         }
-        state_reference.positions[i] = position_reference_[i];
+        // Filter here
+        state_reference.positions[i] =
+          filters::exponentialSmoothing(position_reference_[i], last_reference_.positions[i], 0.03);
+        // state_reference.positions[i] = position_reference_[i];
       }
 
       // update velocity
@@ -750,7 +754,10 @@ void AdmittanceController::read_state_reference_interfaces(
         {
           velocity_reference_[i].get() = last_reference_.velocities[i];
         }
-        state_reference.velocities[i] = velocity_reference_[i];
+        // Filter here
+        state_reference.velocities[i] =
+          filters::exponentialSmoothing(velocity_reference_[i], last_reference_.velocities[i], 0.03);
+        // state_reference.velocities[i] = velocity_reference_[i];
       }
     }
   }
