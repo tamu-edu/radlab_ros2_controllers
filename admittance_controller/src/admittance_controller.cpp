@@ -729,6 +729,9 @@ void AdmittanceController::read_state_reference_interfaces(
 {
   // TODO(destogl): check why is this here?
 
+  const auto admittance_state = admittance_->get_controller_state();
+  bool should_reset = false;
+
   // if any interface has nan values, assume state_reference is the last set reference
   for (size_t i = 0; i < num_joints_; ++i)
   {
@@ -742,9 +745,30 @@ void AdmittanceController::read_state_reference_interfaces(
           position_reference_[i].get() = last_reference_.positions[i];
         }
         // Filter here
-        state_reference.positions[i] =
-          filters::exponentialSmoothing(position_reference_[i], last_reference_.positions[i], 0.03);
-        // state_reference.positions[i] = position_reference_[i];
+        // state_reference.positions[i] =
+        //   filters::exponentialSmoothing(position_reference_[i], last_reference_.positions[i],
+        //   0.03);
+        state_reference.positions[i] = position_reference_[i];
+
+        // Check to see if the difference between now and last is super close to the joint state
+        // delta If it is, and the step is over some threshold (1e-4?), then... reset admittance?
+        // Just print for now and make sure its only happening when expected
+        const auto delta = position_reference_[i] - last_reference_.positions[i];
+        const auto & j_state = admittance_state.joint_state.position.at(i);
+
+        // Instead of this check, this could be something like an alpha-beta filter which has an
+        // expected velocity and uses that to catch a step better than this
+        if (fabs(delta) > 7e-4 && fabs(delta - j_state) < 1e-5)
+        {
+          should_reset = true;
+          RCLCPP_ERROR_STREAM(
+            get_node()->get_logger(), "Looks like that problem\nJoint: "
+                                        << i << "\nLast ref: " << last_reference_.positions[i]
+                                        << "\nCurrent ref: " << position_reference_[i]
+                                        << "\nDelta ref: " << delta
+                                        << "\nAdmittance Joint Pos: " << j_state
+                                        << "\n fabs(delta - j_state) " << fabs(delta - j_state));
+        }
       }
 
       // update velocity
@@ -755,11 +779,16 @@ void AdmittanceController::read_state_reference_interfaces(
           velocity_reference_[i].get() = last_reference_.velocities[i];
         }
         // Filter here
-        state_reference.velocities[i] =
-          filters::exponentialSmoothing(velocity_reference_[i], last_reference_.velocities[i], 0.03);
-        // state_reference.velocities[i] = velocity_reference_[i];
+        // state_reference.velocities[i] = filters::exponentialSmoothing(
+        //   velocity_reference_[i], last_reference_.velocities[i], 0.03);
+        state_reference.velocities[i] = velocity_reference_[i];
       }
     }
+  }
+
+  if (should_reset)
+  {
+    admittance_->reset(num_joints_);
   }
 
   last_reference_.positions = state_reference.positions;
