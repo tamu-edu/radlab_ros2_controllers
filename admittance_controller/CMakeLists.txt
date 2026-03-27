@@ -25,6 +25,7 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
   tf2_ros
   TinyXML2
   trajectory_msgs
+  rad_utils
 )
 
 find_package(ament_cmake REQUIRED)
@@ -63,6 +64,7 @@ target_link_libraries(admittance_controller PUBLIC
                       tf2_geometry_msgs::tf2_geometry_msgs
                       tf2_kdl::tf2_kdl
                       tf2_ros::tf2_ros
+                      rad_utils::rad_utils
                       ${geometry_msgs_TARGETS}
                       ${trajectory_msgs_TARGETS}
                       ${control_msgs_TARGETS}

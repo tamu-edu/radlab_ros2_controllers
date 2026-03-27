@@ -28,6 +28,7 @@
 #include "control_msgs/msg/admittance_controller_state.hpp"
 #include "controller_interface/chainable_controller_interface.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
+#include "rad_utils/filters/alpha_beta_filter.hpp"
 #include "rclcpp/duration.hpp"
 #include "rclcpp/time.hpp"
 #include "rclcpp_lifecycle/state.hpp"
@@ -150,6 +151,10 @@ protected:
   // applied ft_values_: values read from the force torque sensor
   trajectory_msgs::msg::JointTrajectoryPoint reference_, joint_state_, reference_admittance_;
   geometry_msgs::msg::Wrench ft_values_;
+
+  // Filtering the reference inputs
+  std::vector<rad_filters::AlphaBetaFilter> pos_ref_filters_;
+  std::vector<double> last_filter_residuals_;
 
   /**
    * @brief Read values from hardware interfaces and set corresponding fields of state_current and

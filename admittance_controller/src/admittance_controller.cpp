@@ -121,6 +121,12 @@ controller_interface::CallbackReturn AdmittanceController::on_init()
       doc.ErrorStr());
     return controller_interface::CallbackReturn::ERROR;
   }
+
+  // This is terrible for now -- hardcoded AF, including the dt (rate) parameter
+  for (size_t i=0; i < num_joints_ ; ++i) {
+    pos_ref_filters_.emplace_back(rad_filters::AlphaBetaFilter(0.08, 0.01, 0.002));
+  }
+  last_filter_residuals_.assign(num_joints_, 0.0);
   return controller_interface::CallbackReturn::SUCCESS;
 }
 
@@ -470,6 +476,13 @@ controller_interface::CallbackReturn AdmittanceController::on_activate(
   reference_ = joint_state_;
   reference_admittance_ = joint_state_;
 
+  // Reset filters
+  for (size_t i = 0; i < num_joints_; ++i)
+  {
+    pos_ref_filters_.at(i).reset(joint_state_.positions.at(i));
+    last_filter_residuals_.at(i) = 0.0;
+  }
+
   return controller_interface::CallbackReturn::SUCCESS;
 }
 
@@ -750,24 +763,39 @@ void AdmittanceController::read_state_reference_interfaces(
         //   0.03);
         state_reference.positions[i] = position_reference_[i];
 
-        // Check to see if the difference between now and last is super close to the joint state
-        // delta If it is, and the step is over some threshold (1e-4?), then... reset admittance?
-        // Just print for now and make sure its only happening when expected
-        const auto delta = position_reference_[i] - last_reference_.positions[i];
-        const auto & j_state = admittance_state.joint_state.position.at(i);
+        // // Check to see if the difference between now and last is super close to the joint state
+        // // delta If it is, and the step is over some threshold (1e-4?), then... reset admittance?
+        // // Just print for now and make sure its only happening when expected
+        // const auto delta = position_reference_[i] - last_reference_.positions[i];
+        // const auto & j_state = admittance_state.joint_state.position.at(i);
 
-        // Instead of this check, this could be something like an alpha-beta filter which has an
-        // expected velocity and uses that to catch a step better than this
-        if (fabs(delta) > 7e-4 && fabs(delta - j_state) < 1e-5)
+        // // Instead of this check, this could be something like an alpha-beta filter which has an
+        // // expected velocity and uses that to catch a step better than this
+        // if (fabs(delta) > 7e-4 && fabs(delta - j_state) < 1e-5)
+        // {
+        //   should_reset = true;
+        //   RCLCPP_ERROR_STREAM(
+        //     get_node()->get_logger(), "Looks like that problem\nJoint: "
+        //                                 << i << "\nLast ref: " << last_reference_.positions[i]
+        //                                 << "\nCurrent ref: " << position_reference_[i]
+        //                                 << "\nDelta ref: " << delta
+        //                                 << "\nAdmittance Joint Pos: " << j_state
+        //                                 << "\n fabs(delta - j_state) " << fabs(delta - j_state));
+        // }
+
+        const auto val = pos_ref_filters_.at(i).filter(position_reference_[i]);
+        const auto residual = pos_ref_filters_.at(i).get_residual();
+        const auto delta_res = residual.first - last_filter_residuals_.at(i);
+
+        if (fabs(delta_res) > 5e-3)
         {
           should_reset = true;
           RCLCPP_ERROR_STREAM(
-            get_node()->get_logger(), "Looks like that problem\nJoint: "
-                                        << i << "\nLast ref: " << last_reference_.positions[i]
-                                        << "\nCurrent ref: " << position_reference_[i]
-                                        << "\nDelta ref: " << delta
-                                        << "\nAdmittance Joint Pos: " << j_state
-                                        << "\n fabs(delta - j_state) " << fabs(delta - j_state));
+            get_node()->get_logger(),
+            "Joint: " << i << "\nfiltered_val: " << val
+                      << "\nfiltered_deriv: " << pos_ref_filters_.at(i).get_filtered_derivative()
+                      << "\nresidual: " << residual.first << "\nresidual_deriv: " << residual.second
+                      << "\nDelta res: " << fabs(delta_res));
         }
       }
 
