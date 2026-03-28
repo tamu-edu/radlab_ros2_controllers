@@ -155,6 +155,8 @@ protected:
   // Filtering the reference inputs
   std::vector<rad_filters::AlphaBetaFilter> pos_ref_filters_;
   std::vector<double> last_filter_residuals_;
+  size_t count_since_reset_;
+  size_t max_counts_until_next_reset_{125};
 
   /**
    * @brief Read values from hardware interfaces and set corresponding fields of state_current and

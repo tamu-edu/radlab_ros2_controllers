@@ -123,10 +123,12 @@ controller_interface::CallbackReturn AdmittanceController::on_init()
   }
 
   // This is terrible for now -- hardcoded AF, including the dt (rate) parameter
-  for (size_t i=0; i < num_joints_ ; ++i) {
+  for (size_t i = 0; i < num_joints_; ++i)
+  {
     pos_ref_filters_.emplace_back(rad_filters::AlphaBetaFilter(0.08, 0.01, 0.002));
   }
   last_filter_residuals_.assign(num_joints_, 0.0);
+  count_since_reset_ = max_counts_until_next_reset_;
   return controller_interface::CallbackReturn::SUCCESS;
 }
 
@@ -482,6 +484,7 @@ controller_interface::CallbackReturn AdmittanceController::on_activate(
     pos_ref_filters_.at(i).reset(joint_state_.positions.at(i));
     last_filter_residuals_.at(i) = 0.0;
   }
+  count_since_reset_ = max_counts_until_next_reset_;
 
   return controller_interface::CallbackReturn::SUCCESS;
 }
@@ -789,13 +792,25 @@ void AdmittanceController::read_state_reference_interfaces(
 
         if (fabs(delta_res) > 5e-3)
         {
-          should_reset = true;
+          const auto delta = position_reference_[i] - last_reference_.positions[i];
+          const auto & j_state = admittance_state.joint_state.position.at(i);
           RCLCPP_ERROR_STREAM(
             get_node()->get_logger(),
             "Joint: " << i << "\nfiltered_val: " << val
                       << "\nfiltered_deriv: " << pos_ref_filters_.at(i).get_filtered_derivative()
                       << "\nresidual: " << residual.first << "\nresidual_deriv: " << residual.second
-                      << "\nDelta res: " << fabs(delta_res));
+                      << "\nDelta res: " << fabs(delta_res)
+                      << "\nJump was: " << fabs(delta - j_state));
+
+          // if (fabs(delta - j_state) < 1e-5)
+          // {
+          should_reset = true;
+          // RCLCPP_ERROR_STREAM(get_node()->get_logger(), "RESETTING");
+          // }
+          // else
+          // {
+          //   RCLCPP_ERROR_STREAM(get_node()->get_logger(), "Skipping");
+          // }
         }
       }
 
@@ -816,7 +831,21 @@ void AdmittanceController::read_state_reference_interfaces(
 
   if (should_reset)
   {
-    admittance_->reset(num_joints_);
+    if (count_since_reset_ >= max_counts_until_next_reset_)
+    {
+      admittance_->reset(num_joints_);
+      count_since_reset_ = 0;
+      RCLCPP_ERROR_STREAM(get_node()->get_logger(), "Counter is good, RESETTING");
+    }
+    else
+    {
+      RCLCPP_ERROR_STREAM(get_node()->get_logger(), "In timeout, skipping");
+    }
+  }
+
+  if (count_since_reset_ < std::numeric_limits<std::size_t>::max())
+  {
+    count_since_reset_++;
   }
 
   last_reference_.positions = state_reference.positions;
